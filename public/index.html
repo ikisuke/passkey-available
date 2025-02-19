@@ -1,0 +1,244 @@
+<!DOCTYPE html>
+<html>
+  <head>
+    <meta charset="utf-8" />
+    <title>PRF/LargeBlob Available Demo</title>
+  </head>
+  <body>
+    <h1>PRF/LargeBlob Available Demo</h1>
+    <p>WebAuthnのPRF/LargeBlobを取得するデモ</p>
+
+    <div>
+      <h2>1. ユーザ登録</h2>
+      <input type="text" id="regUserId" placeholder="user id" value="user001" />
+      <input
+        type="text"
+        id="regUserName"
+        placeholder="user name"
+        value="Alice"
+      />
+      <button id="regButton">Register</button>
+      <p id="regStatus"></p>
+      <p id="extensionStatus"></p>
+    </div>
+    <hr />
+
+    <div>
+      <h2>2. ログイン</h2>
+      <input
+        type="text"
+        id="loginUserId"
+        placeholder="user id"
+        value="user001"
+      />
+      <button id="loginButton">Login</button>
+      <p id="loginStatus"></p>
+      <p id="hmacInfo"></p>
+    </div>
+
+    <script>
+      // 取得したHMAC-Secretの出力を保持するグローバル変数
+      let realHmacSecretKey = null; // ArrayBuffer or null
+
+      //----------------------------------
+      // 1. ユーザ登録
+      //----------------------------------
+      document
+        .getElementById("regButton")
+        .addEventListener("click", async () => {
+          const userId = document.getElementById("regUserId").value;
+          const userName = document.getElementById("regUserName").value;
+          const regStatus = document.getElementById("regStatus");
+          const extensionStatus = document.getElementById("extensionStatus");
+
+          // サーバへ登録開始リクエスト
+          const options = await fetch("/register-start", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ userId, userName }),
+          }).then((r) => r.json());
+
+          // WebAuthn create()
+          options.challenge = _strToArrayBuffer(options.challenge);
+          if (options.user && options.user.id) {
+            options.user.id = _strToArrayBuffer(options.user.id);
+          }
+          if (options.pubKeyCredParams) {
+            options.pubKeyCredParams = options.pubKeyCredParams.map(
+              (param) => ({
+                type: param.type,
+                alg: param.alg,
+              })
+            );
+          }
+
+          let attResp;
+          try {
+            attResp = await navigator.credentials.create({
+              publicKey: options,
+            });
+          } catch (e) {
+            console.error(e);
+            regStatus.textContent =
+              "navigator.credentials.create() error: " + e;
+            return;
+          }
+          const extensionResults = attResp.getClientExtensionResults();
+          console.log("clientExtensionResults:", extensionResults);
+
+          // 拡張機能のサポート状況を表示
+          const prfEnabled = extensionResults.prf?.enabled ?? false;
+          const largeBlobSupported =
+            extensionResults.largeBlob?.supported ?? false;
+          extensionStatus.textContent = `拡張機能サポート状況:
+             PRF${prfEnabled ? "✅" : "❌"},
+             Large Blob: ${largeBlobSupported ? "✅" : "❌"}`;
+
+          // サーバに結果送信
+          const finish = await fetch("/register-finish", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({
+              userId,
+              attResp: _encodePublicKeyCredential(attResp),
+            }),
+          }).then((r) => r.text());
+
+          regStatus.textContent = finish;
+        });
+
+      //----------------------------------
+      // 2. ログイン
+      //----------------------------------
+      document
+        .getElementById("loginButton")
+        .addEventListener("click", async () => {
+          const userId = document.getElementById("loginUserId").value;
+          const loginStatus = document.getElementById("loginStatus");
+          const hmacInfo = document.getElementById("hmacInfo");
+
+          // サーバにログイン開始
+          const options = await fetch("/login-start", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ userId }),
+          }).then((r) => r.json());
+
+          // WebAuthn get()
+          options.challenge = _strToArrayBuffer(options.challenge);
+          if (options.allowCredentials) {
+            options.allowCredentials = options.allowCredentials.map((cred) => ({
+              id: _strToArrayBuffer(cred.id),
+              type: cred.type,
+            }));
+          }
+          console.log("options:", options.extensions.prf.eval.first);
+          options.extensions.prf.eval.first = _strToArrayBuffer(
+            options.extensions.prf.eval.first
+          );
+
+          let assertion;
+          try {
+            assertion = await navigator.credentials.get({
+              publicKey: options,
+            });
+          } catch (e) {
+            console.error(e);
+            loginStatus.textContent = "navigator.credentials.get() error: " + e;
+            return;
+          }
+
+          // clientExtensionResultsを取得
+          const extensionResults = assertion.getClientExtensionResults();
+          console.log("extensionResults:", extensionResults.prf.results.first);
+
+          // HMAC-Secretを取得
+          if (extensionResults) {
+            realHmacSecretKey = extensionResults.prf.results.first;
+            const hexString = Array.from(new Uint8Array(realHmacSecretKey))
+              .map((b) => b.toString(16).padStart(2, "0"))
+              .join("");
+            hmacInfo.textContent = `ログインできました`;
+          } else {
+            realHmacSecretKey = null;
+            hmacInfo.textContent = "ログインできませんでした";
+          }
+
+          // サーバに署名を送って検証
+          const finish = await fetch("/login-finish", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({
+              userId,
+              authResp: {
+                ..._encodePublicKeyCredential(assertion),
+                clientExtensionResults: extensionResults,
+              },
+            }),
+          }).then((r) => r.text());
+
+          loginStatus.textContent = finish;
+        });
+
+      //------------------------------------------------
+      // バイナリ変換系の補助関数
+      //------------------------------------------------
+      function _strToArrayBuffer(str) {
+        // base64url → Uint8Array
+        const bin = atob(base64urlToBase64(str));
+        const buf = new Uint8Array(bin.length);
+        for (let i = 0; i < bin.length; i++) {
+          buf[i] = bin.charCodeAt(i);
+        }
+        return buf.buffer;
+      }
+
+      function base64urlToBase64(base64urlString) {
+        let base64String = base64urlString
+          .replace(/-/g, "+")
+          .replace(/_/g, "/");
+        const pad = base64String.length % 4;
+        if (pad) {
+          base64String += "====".slice(0, 4 - pad);
+        }
+        return base64String;
+      }
+
+      function _encodePublicKeyCredential(cred) {
+        if (!cred) return {};
+        return {
+          id: cred.id,
+          rawId: base64urlFromArrayBuffer(cred.rawId),
+          type: cred.type,
+          response: {
+            clientDataJSON: base64urlFromArrayBuffer(
+              cred.response.clientDataJSON
+            ),
+            attestationObject: cred.response.attestationObject
+              ? base64urlFromArrayBuffer(cred.response.attestationObject)
+              : undefined,
+            authenticatorData: cred.response.authenticatorData
+              ? base64urlFromArrayBuffer(cred.response.authenticatorData)
+              : undefined,
+            signature: cred.response.signature
+              ? base64urlFromArrayBuffer(cred.response.signature)
+              : undefined,
+            userHandle: cred.response.userHandle
+              ? base64urlFromArrayBuffer(cred.response.userHandle)
+              : undefined,
+          },
+        };
+      }
+
+      function base64urlFromArrayBuffer(buf) {
+        return base64UrlEncode(
+          btoa(String.fromCharCode(...new Uint8Array(buf)))
+        );
+      }
+
+      function base64UrlEncode(str) {
+        return str.replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/, "");
+      }
+    </script>
+  </body>
+</html>
