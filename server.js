@@ -47,14 +47,14 @@ app.post("/register-start", async (req, res) => {
     userID: isoUint8Array.fromUTF8String(userId),
     userName: userName,
     // HMAC-Secret拡張を有効化 (CTAP2レベルでhmac-secretを作成可能にする)
-    //     extensions: {
-    //       hmacCreateSecret: true,
-    //       prf: {},
-    //       largeBlob: { support: "preferred" },
-    //     },
-    //     authenticatorSelection: {
-    //       authenticatorAttachment: "cross-platform",
-    //     },
+    extensions: {
+      hmacCreateSecret: true,
+      //     prf: {},
+      largeBlob: { support: "preferred" },
+    },
+    authenticatorSelection: {
+      authenticatorAttachment: "cross-platform",
+    },
   });
   console.log(options);
 
