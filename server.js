@@ -42,7 +42,7 @@ app.post("/register-start", async (req, res) => {
   //     const prfKey = crypto.randomBytes(32);
   // generateRegistrationOptionsでWebAuthn登録用オプションを生成
   const options = await generateRegistrationOptions({
-    rpName: "HMAC-Secret Demo",
+    rpName: "Passkey Demo",
     rpID: RPID,
     userID: isoUint8Array.fromUTF8String(userId),
     userName: userName,
@@ -55,6 +55,11 @@ app.post("/register-start", async (req, res) => {
     //     authenticatorSelection: {
     //       authenticatorAttachment: "cross-platform",
     //     },
+    extensions: {
+      hmacCreateSecret: true,
+      prf: {},
+      largeBlob: { support: "preferred" },
+    },
   });
   console.log(options);
 
