@@ -49,7 +49,7 @@ app.post("/register-start", async (req, res) => {
     // HMAC-Secret拡張を有効化 (CTAP2レベルでhmac-secretを作成可能にする)
     extensions: {
       hmacCreateSecret: true,
-      prf: {},
+      //     prf: {},
       largeBlob: { support: "preferred" },
     },
     //     authenticatorSelection: {
