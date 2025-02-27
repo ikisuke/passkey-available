@@ -52,8 +52,8 @@ app.post("/register-start", async (req, res) => {
     //     },
     extensions: {
       hmacCreateSecret: true,
-      // prf: {},
-      largeBlob: { support: "preferred" },
+      prf: {},
+      // largeBlob: { support: "preferred" },
     },
   });
   console.log(options);
